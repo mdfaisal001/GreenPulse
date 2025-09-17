@@ -1,0 +1,5 @@
+# Node.js / JavaScript
+node_modules/
+dist/
+.env
+*.log
