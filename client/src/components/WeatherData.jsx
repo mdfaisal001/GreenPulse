@@ -3,58 +3,57 @@ import React, { useEffect, useState } from "react";
 function WeatherData() {
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState(null);
+  const [agroData, setAgroData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
   const [locationName, setLocationName] = useState("Current Location");
 
   // Function to fetch weather data
-  const fetchWeatherData = (latitude = 11.0168, longitude = 76.9558) => { // Default to Trichy coordinates
+  const fetchWeatherData = async (latitude = 11.0168, longitude = 76.9558) => {
     setLoading(true);
     const weatherUrl = `http://localhost:5000/api/weather?lat=${latitude}&lon=${longitude}`;
     const forecastUrl = `http://localhost:5000/api/forecast?lat=${latitude}&lon=${longitude}`;
+    const locationUrl = `http://localhost:5000/api/location?lat=${latitude}&lon=${longitude}`;
+    const agroUrl = `http://localhost:5000/api/agro-data?lat=${latitude}&lon=${longitude}`;
     
-    Promise.all([
-      fetch(weatherUrl).then(res => {
-        if (!res.ok) {
-          throw new Error(`Weather API error: ${res.status} ${res.statusText}`);
-        }
-        return res.json();
-      }),
-      fetch(forecastUrl).then(res => {
-        if (!res.ok) {
-          throw new Error(`Forecast API error: ${res.status} ${res.statusText}`);
-        }
-        return res.json();
-      })
-    ])
-    .then(([weatherData, forecastData]) => {
+    try {
+      const [weatherData, forecastData, locationData, agroDataResponse] = await Promise.all([
+        fetch(weatherUrl).then(res => {
+          if (!res.ok) throw new Error(`Weather API error: ${res.status}`);
+          return res.json();
+        }),
+        fetch(forecastUrl).then(res => {
+          if (!res.ok) throw new Error(`Forecast API error: ${res.status}`);
+          return res.json();
+        }),
+        fetch(locationUrl).then(res => {
+          if (!res.ok) throw new Error(`Location API error: ${res.status}`);
+          return res.json();
+        }),
+        fetch(agroUrl).then(res => {
+          if (!res.ok) throw new Error(`Agro API error: ${res.status}`);
+          return res.json();
+        }).catch(err => {
+          console.warn("⚠️ Agro data not available:", err);
+          return null;
+        })
+      ]);
+      
       setWeather(weatherData);
       setForecast(forecastData);
+      setAgroData(agroDataResponse);
+      setLocationName(locationData.name + (locationData.state ? `, ${locationData.state}` : ''));
       setLoading(false);
-      console.log("✅ Weather data loaded for coordinates:", latitude, longitude);
-    })
-    .catch((err) => {
+      console.log("✅ Weather data loaded for:", locationData.name);
+      console.log("📊 Data sources: OpenWeatherMap (weather/forecast) + AgroMonitoring (agro data)");
+    } catch (err) {
       console.error("❌ Error fetching weather data:", err);
       setLoading(false);
-    });
-  };
-
-  // Function to get city name from coordinates  
-  const getCityName = async (latitude, longitude) => {
-    try {
-      const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
-      const data = await response.json();
-      const cityName = data.city || data.locality || data.principalSubdivision || "Current Location";
-      setLocationName(cityName);
-      console.log("📍 City name found:", cityName);
-    } catch (error) {
-      console.error("Error getting city name:", error);
-      setLocationName("Current Location");
     }
   };
 
-  // Function to get user's current location with better error handling
+  // Function to get user's current location
   const getCurrentLocation = () => {
     setLocationError(null);
     setLoading(true);
@@ -64,14 +63,14 @@ function WeatherData() {
     if (!navigator.geolocation) {
       setLocationError("Geolocation is not supported by this browser");
       console.error("❌ Geolocation not supported");
-      fetchWeatherData(); // Fallback to Trichy
+      fetchWeatherData(); // Fallback to default location
       return;
     }
 
     const options = {
       enableHighAccuracy: true,
-      timeout: 15000, // Increased timeout
-      maximumAge: 300000 // 5 minutes cache
+      timeout: 15000,
+      maximumAge: 300000
     };
 
     navigator.geolocation.getCurrentPosition(
@@ -80,7 +79,6 @@ function WeatherData() {
         console.log("✅ User location obtained:", latitude, longitude);
         
         setLocation({ latitude, longitude });
-        getCityName(latitude, longitude);
         fetchWeatherData(latitude, longitude);
       },
       (error) => {
@@ -89,8 +87,7 @@ function WeatherData() {
         
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            errorMessage = "Location access denied by user. Please enable location in your browser settings.";
-            console.error("User denied location permission");
+            errorMessage = "Location access denied. Please enable location in your browser settings.";
             break;
           case error.POSITION_UNAVAILABLE:
             errorMessage = "Location information unavailable";
@@ -104,7 +101,7 @@ function WeatherData() {
         }
         
         setLocationError(errorMessage);
-        fetchWeatherData(); // Fallback to Trichy
+        fetchWeatherData(); // Fallback to default location
       },
       options
     );
@@ -119,12 +116,10 @@ function WeatherData() {
   };
 
   useEffect(() => {
-    // Force location request on component mount
     console.log("🚀 Component mounted, requesting location...");
     getCurrentLocation();
 
-    // Set up interval to refresh every 30 minutes
-    const interval = setInterval(refreshWeather, 1800000);
+    const interval = setInterval(refreshWeather, 1800000); // 30 minutes
     return () => clearInterval(interval);
   }, []);
 
@@ -144,11 +139,9 @@ function WeatherData() {
       groupedData[dateKey].push(item);
     });
     
-    // Get daily forecasts (one per day, preferably noon time)
-    const dailyForecasts = Object.keys(groupedData).slice(0, 5).map(dateKey => {
+    const dailyForecasts = Object.keys(groupedData).slice(0, 7).map(dateKey => {
       const dayData = groupedData[dateKey];
       
-      // Find the forecast closest to noon (12:00)
       const noonForecast = dayData.reduce((prev, current) => {
         const prevHour = new Date(prev.dt * 1000).getHours();
         const currentHour = new Date(current.dt * 1000).getHours();
@@ -156,7 +149,6 @@ function WeatherData() {
         return Math.abs(currentHour - 12) < Math.abs(prevHour - 12) ? current : prev;
       });
       
-      // Calculate daily min/max from all forecasts of that day
       const temps = dayData.map(item => item.main.temp);
       const minTemp = Math.min(...temps);
       const maxTemp = Math.max(...temps);
@@ -182,7 +174,7 @@ function WeatherData() {
     
     if (date.toDateString() === today.toDateString()) return "Today";
     if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
-    return date.toLocaleDateString('en-US', { weekday: 'short' });
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
   const formatTime = (timestamp) => {
@@ -192,6 +184,22 @@ function WeatherData() {
       hour12: true,
       timeZone: 'Asia/Kolkata'
     });
+  };
+
+  // Weather icon mapping for better visuals
+  const getWeatherEmoji = (iconCode) => {
+    const iconMap = {
+      '01d': '☀️', '01n': '🌙',
+      '02d': '⛅', '02n': '☁️',
+      '03d': '☁️', '03n': '☁️',
+      '04d': '☁️', '04n': '☁️',
+      '09d': '🌧️', '09n': '🌧️',
+      '10d': '🌦️', '10n': '🌧️',
+      '11d': '⛈️', '11n': '⛈️',
+      '13d': '❄️', '13n': '❄️',
+      '50d': '🌫️', '50n': '🌫️'
+    };
+    return iconMap[iconCode] || '🌤️';
   };
 
   if (loading) {
@@ -237,7 +245,7 @@ function WeatherData() {
     );
   }
 
-  // Safe access to weather data
+  // Safe access to weather data (from OpenWeatherMap)
   const temp = Math.round(weather?.main?.temp ?? 0);
   const feelsLike = Math.round(weather?.main?.feels_like ?? 0);
   const min = Math.round(weather?.main?.temp_min ?? 0);
@@ -248,6 +256,7 @@ function WeatherData() {
   const clouds = weather?.clouds?.all ?? 0;
   const weatherDesc = weather?.weather?.[0]?.description ?? "clear sky";
   const weatherIcon = weather?.weather?.[0]?.icon;
+  const weatherEmoji = getWeatherEmoji(weatherIcon);
   const currentTime = formatTime(Date.now() / 1000);
 
   return (
@@ -305,7 +314,7 @@ function WeatherData() {
           {/* Current Weather Hero Section */}
           <div className="bg-gradient-to-r from-slate-800/80 to-green-800/60 backdrop-blur-sm rounded-3xl p-8 mb-8 border border-green-700/30 shadow-2xl">
             <div className="flex items-center justify-between mb-6">
-              <div>
+              <div className="flex items-center space-x-4">
                 {weatherIcon && (
                   <img
                     src={`https://openweathermap.org/img/wn/${weatherIcon}@4x.png`}
@@ -313,11 +322,11 @@ function WeatherData() {
                     className="w-24 h-24 drop-shadow-lg"
                   />
                 )}
+                <span className="text-6xl">{weatherEmoji}</span>
               </div>
               <div className="text-right">
-                <div className="text-6xl font-bold text-green-100 mb-2">{temp}°</div>
-                <div className="text-green-300 text-sm">FC</div>
-                <div className="text-green-400 text-sm mt-1">{max}° {min}°</div>
+                <div className="text-6xl font-bold text-green-100 mb-2">{temp}°C</div>
+                <div className="text-green-400 text-sm mt-1">{max}° / {min}°</div>
               </div>
             </div>
 
@@ -325,7 +334,7 @@ function WeatherData() {
               <div>
                 <h2 className="text-2xl font-bold text-green-200 capitalize">{weatherDesc}</h2>
                 <div className="flex items-center space-x-2 text-green-300 mt-1">
-                  <span>Feels like {feelsLike}°</span>
+                  <span>Feels like {feelsLike}°C</span>
                 </div>
               </div>
             </div>
@@ -345,36 +354,39 @@ function WeatherData() {
             </div>
           </div>
 
-          {/* 5-Day Forecast */}
+          {/* 7-Day Forecast */}
           <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-6 border border-green-700/30 shadow-xl mb-8">
             <h3 className="text-green-300 text-lg font-semibold mb-4 flex items-center space-x-2">
               <span>📅</span>
-              <span>5-Day Agricultural Forecast</span>
+              <span>7-Day Agricultural Forecast</span>
+              <span className="text-xs text-blue-400 ml-2">(OpenWeatherMap)</span>
             </h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-4">
               {groupForecastByDays(forecast?.list)?.map((item, index) => {
                 const dayTemp = Math.round(item.main.temp);
                 const minTemp = Math.round(item.main.temp_min);
                 const maxTemp = Math.round(item.main.temp_max);
                 const humidity = item.main.humidity;
+                const dayEmoji = getWeatherEmoji(item.weather?.[0]?.icon);
                 
                 return (
                   <div key={index} className="text-center p-4 rounded-xl bg-slate-700/30 hover:bg-slate-700/50 transition-colors border border-green-800/20">
                     <div className="text-green-300 text-sm font-medium mb-2">
                       {formatDay(item.dt)}
                     </div>
-                    <div className="mb-3">
+                    <div className="mb-3 flex justify-center items-center space-x-2">
                       {item.weather?.[0]?.icon && (
                         <img
                           src={`https://openweathermap.org/img/wn/${item.weather[0].icon}@2x.png`}
                           alt={item.weather[0].description}
-                          className="w-12 h-12 mx-auto drop-shadow-md"
+                          className="w-12 h-12 drop-shadow-md"
                           title={item.weather[0].description}
                         />
                       )}
+                      <span className="text-3xl">{dayEmoji}</span>
                     </div>
-                    <div className="text-white font-bold text-lg">{maxTemp}°</div>
-                    <div className="text-green-400 text-sm">{minTemp}°</div>
+                    <div className="text-white font-bold text-lg">{maxTemp}°C</div>
+                    <div className="text-green-400 text-sm">{minTemp}°C</div>
                     <div className="text-blue-400 text-xs mt-1">💧 {humidity}%</div>
                     {item.rain && (
                       <div className="text-blue-300 text-xs">🌧️ {item.rain["3h"] || 0}mm</div>
@@ -394,6 +406,9 @@ function WeatherData() {
               </div>
               <div className="text-white text-2xl font-bold">{humidity}%</div>
               <div className="text-blue-400 text-xs mt-1">Crop Irrigation</div>
+              {agroData && (
+                <div className="text-blue-500 text-xs mt-1">AgroMap: {agroData.main?.humidity}%</div>
+              )}
             </div>
 
             <div className="bg-slate-800/60 backdrop-blur-sm rounded-xl p-4 border border-green-700/30">
@@ -410,7 +425,7 @@ function WeatherData() {
                 <span className="text-yellow-300 text-sm">Feels Like</span>
                 <span className="text-2xl">🌡️</span>
               </div>
-              <div className="text-white text-2xl font-bold">{feelsLike}°</div>
+              <div className="text-white text-2xl font-bold">{feelsLike}°C</div>
               <div className="text-yellow-400 text-xs mt-1">Field Work Index</div>
             </div>
 
@@ -428,7 +443,7 @@ function WeatherData() {
           <div className="text-center mt-8 text-green-500/70">
             <p className="flex items-center justify-center space-x-2 text-sm">
               <span>🌾</span>
-              <span>Powered by AgroMonitoring Agricultural Weather API</span>
+              <span>Weather: OpenWeatherMap • Agricultural Data: AgroMonitoring</span>
               <span>🚜</span>
             </p>
             <p className="text-xs mt-1">
